@@ -1,251 +1,170 @@
-#import streamlit as st
+import streamlit as st
 import numpy as np
 import pandas as pd
 from scipy import stats
 import matplotlib.pyplot as plt
-import streamlit as st
 
-st.set_page_config(page_title="Histogram Fitting Webapp", layout="wide")
-
-DISTRIBUTIONS = {
-    "Normal (Gaussian)": stats.norm,
-    "Gamma": stats.gamma,
-    "Weibull": stats.weibull_min,
-    "Exponential": stats.expon,
-    "Beta": stats.beta,
-    "Log-Normal": stats.lognorm,
-    "Uniform": stats.uniform,
-    "Student's t": stats.t,
-    "Cauchy": stats.cauchy,
-    "Laplace": stats.laplace,
-    "Logistic": stats.logistic,
-}
-
-def parse_manual_data(raw_text: str) -> np.ndarray:
+# ==== 1. Set page configuration and title ====
+st.set_page_config(page_title="Histogram Fitter Webapp", layout="centered")
+st.title("Histogram Fitter Webapp")
+st.markdown(
     """
-    Turn a string like '1, 2 3\\n4' into a 1D numpy array of numbers.
+    Upload a CSV file, paste numbers, fit a distribution, and adjust parameters for manual fitting.  
+    Visualize your data and evaluate fit quality!
     """
-    cleaned = raw_text.replace("\\n", ",")
-    data = np.genfromtxt(cleaned, delimiter=",")
-    data = np.atleast_1d(data)
-    return data[~np.isnan(data)]
-
-def get_param_info(dist, params):
-    """
-    Given a SciPy distribution and its fitted parameters, return a list of
-    (name, value) pairs for shape parameters, loc, and scale.
-    """
-    shape_names = dist.shapes.split(", ") if dist.shapes else []
-    param_info = []
-    n_params = len(params)
-
-    for i, value in enumerate(params):
-        if i < len(shape_names):
-            name = shape_names[i]  # shape parameters (e.g. "a", "b")
-        elif i == n_params - 2:
-            name = "loc"
-        elif i == n_params - 1:
-            name = "scale"
-        else:
-            name = f"param_{i + 1}"
-        param_info.append((name, value))
-
-    return param_info
-
-def make_param_sliders(param_info, data):
-    """
-    Create sliders for each parameter and return the values as a list.
-    param_info: list of (name, default_value)
-    """
-    slider_values = []
-
-    data_min = float(np.min(data))
-    data_max = float(np.max(data))
-    data_range = max(data_max - data_min, 1e-6)  # avoid zero range
-
-    st.markdown("**Adjust the parameters manually:**")
-
-    for name, default in param_info:
-        # Decide slider range based on parameter type
-        if name == "loc":
-            minv = data_min - 0.5 * data_range
-            maxv = data_max + 0.5 * data_range
-        elif name == "scale":
-            minv = data_range / 50
-            maxv = data_range * 2
-        else:
-            minv = 0.0
-            maxv = max(2 * data_max, 10.0)
-
-        value = float(np.clip(default, minv, maxv))
-        step = (maxv - minv) / 200 if maxv > minv else 0.1
-
-        slider_values.append(
-            st.slider(
-                label=name,
-                min_value=float(minv),
-                max_value=float(maxv),
-                value=float(value),
-                step=float(step),
-            )
-        )
-
-    return slider_values
-
-def plot_hist_with_pdf(data, dist, params, n_bins, title_label):
-    """
-    Draw a normalized histogram of 'data' and overlay the PDF of 'dist' with 'params'.
-    Returns (fig, bin_centers, hist_vals) for error calculations.
-    """
-    x = np.linspace(np.min(data), np.max(data), 400)
-
-    try:
-        y = dist.pdf(x, *params)
-    except Exception:
-        y = np.zeros_like(x)
-
-    hist_vals, bin_edges = np.histogram(data, bins=n_bins, density=True)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.hist(data, bins=n_bins, density=True, alpha=0.6, label="Data Histogram")
-    ax.plot(x, y, lw=2, label=title_label)
-    ax.set_xlabel("Value")
-    ax.set_ylabel("Frequency (normalized)")
-    ax.legend()
-
-    return fig, bin_centers, hist_vals
-
-def compute_fit_error(dist, params, bin_centers, hist_vals):
-    """
-    Compute average and maximum absolute error between histogram and PDF.
-    """
-    try:
-        curve_vals = dist.pdf(bin_centers, *params)
-        abs_diff = np.abs(hist_vals - curve_vals)
-        return float(np.mean(abs_diff)), float(np.max(abs_diff))
-    except Exception:
-        return None, None
-
-# ---------------- Sidebar: Data Input ----------------
-
-st.sidebar.header("1. Data Input")
-
-data_input_method = st.sidebar.radio(
-    "Select data input method:",
-    ("Enter by hand", "Upload CSV"),
 )
 
-data = None
+# ==== 2. Layout: Tabs for cleaner interface ====
+tab1, tab2 = st.tabs(["Data Entry", "Distribution Fitting"])
 
-if data_input_method == "Enter by hand":
-    manual_text = st.sidebar.text_area(
-        "Enter numbers separated by commas, spaces, or newlines:",
-        value="10, 12, 11, 14, 13, 13, 12, 15, 14, 16",
-    )
-    try:
-        data = parse_manual_data(manual_text)
-    except Exception:
-        st.sidebar.warning(
-            "Please enter numbers separated by commas, spaces, or lines.\\n"
-            "Example: 1, 2, 3, 4"
+with tab1:
+    st.header("Enter Your Data")
+    data_source = st.radio("How would you like to input data?", ["Paste data", "Upload CSV"])
+    
+    data = None
+    if data_source == "Paste data":
+        raw_data = st.text_area(
+            "Paste your data here (one value per line, or separated by comma/space)",
+            height=150,
+            placeholder="Example:\n1.3\n2.8\n4.2\n..."
         )
-        data = np.array([])
-
-else:  # Upload CSV
-    uploaded_file = st.sidebar.file_uploader(
-        "Upload a CSV with a single column of numbers", type=["csv"]
-    )
-    if uploaded_file is not None:
-        try:
-            df = pd.read_csv(uploaded_file)
-            if df.shape[1] > 1:
-                st.sidebar.warning("Multiple columns detected. Using the first column only.")
-            data = df.iloc[:, 0].values.astype(float)
-        except Exception as e:
-            st.sidebar.error(f"Error reading the uploaded file: {e}")
-            data = np.array([])
+        if raw_data:
+            # Try comma, space or newline separated values
+            try:
+                cleaned = raw_data.replace(',', ' ').replace('\n', ' ')
+                vec = [float(x) for x in cleaned.split() if x.strip() != ""]
+                data = np.array(vec)
+            except Exception:
+                st.error("Please enter valid numbers only.")
     else:
-        data = np.array([])
+        uploaded_file = st.file_uploader("Choose a CSV (one column, or header optional)", type=["csv"])
+        if uploaded_file is not None:
+            try:
+                df = pd.read_csv(uploaded_file)
+                if df.shape[1] == 1:
+                    data = df.values.flatten()
+                else:
+                    col = st.selectbox("Pick which column:", df.columns)
+                    data = df[col].values
+            except Exception:
+                st.error("Could not read the CSV file. Please check your format.")
 
-if data is None or len(data) < 5:
-    st.info("Please enter or upload at least 5 data points to begin.")
-    st.stop()
+    # Immediate summary feedback
+    if data is not None and len(data) > 0:
+        st.success(f"Loaded {len(data)} data points.")
+        st.write("**Five number summary:**", 
+                 pd.Series(data).describe()[['min', '25%', '50%', '75%', 'max']])
+    elif data is not None:
+        st.warning("No data detected.")
 
-st.sidebar.markdown("---")
+# ===== Main logic for fitting =====
+with tab2:
+    st.header("Distribution Fitting")
+    if data is None or len(data) < 5:
+        st.info("Please provide at least 5 valid data points in the 'Data Entry' tab.")
+        st.stop()
 
-# ---------------- Main Layout ----------------
+    # List of distributions (at least 10)
+    DISTROS = {
+        'Normal (Gaussian)': stats.norm,
+        'Gamma': stats.gamma,
+        'Weibull': stats.weibull_min,
+        'Beta': stats.beta,
+        'Log-Normal': stats.lognorm,
+        'Exponential': stats.expon,
+        'Chi-Squared': stats.chi2,
+        'Cauchy': stats.cauchy,
+        'Laplace': stats.laplace,
+        'Logistic': stats.logistic,
+        'Rayleigh': stats.rayleigh,
+        'Pareto': stats.pareto
+    }
+    distro_names = list(DISTROS.keys())
 
-st.title("Histogram Fitting Webapp")
-tab_auto, tab_manual = st.tabs(["Fit Distributions (Auto)", "Manual Fitting"])
+    selected = st.selectbox("Choose a distribution to fit:", distro_names)
+    scipy_dist = DISTROS[selected]
+    st.write(f"Selected Distribution: **{selected}**")
 
-with tab_auto:
-    st.header("2. Automatic Distribution Fitting")
-
-    dist_name_auto = st.selectbox(
-        "Select distribution to fit",
-        list(DISTRIBUTIONS.keys()),
-        index=0,
-        key="auto_dist",
-    )
-    dist_auto = DISTRIBUTIONS[dist_name_auto]
-
-    n_bins = st.slider("Number of histogram bins", 5, 75, 25)
-
-    params_auto = dist_auto.fit(data)
-    param_info_auto = get_param_info(dist_auto, params_auto)
-
-    fig_auto, bin_centers_auto, hist_vals_auto = plot_hist_with_pdf(
-        data,
-        dist_auto,
-        params_auto,
-        n_bins,
-        title_label=f"{dist_name_auto} (auto fit)",
-    )
-    st.pyplot(fig_auto)
+    # Fit parameters automatically
+    try:
+        fit_params = scipy_dist.fit(data)
+        # Get parameter names (from scipy signature)
+        param_names = scipy_dist.shapes.split(', ') if scipy_dist.shapes else []
+        param_names += ['loc', 'scale']
+        # Truncate param_names to length of fit_params (sometimes shapes=None)
+        param_names = param_names[:len(fit_params)]
+    except Exception as e:
+        st.error(f"Could not fit distribution: {e}")
+        st.stop()
 
     st.subheader("Fitted Parameters")
-    pretty_params = ", ".join(
-        f"{name} = {value:.4g}" for name, value in param_info_auto
-    )
-    st.code(pretty_params)
+    fit_param_tbl = pd.DataFrame({
+        "Parameter": param_names,
+        "Estimate": fit_params
+    })
+    st.dataframe(fit_param_tbl, hide_index=True, use_container_width=True)
 
-    avg_err, max_err = compute_fit_error(
-        dist_auto, params_auto, bin_centers_auto, hist_vals_auto
-    )
-    if avg_err is not None:
-        st.info(f"Average absolute error (histogram vs. fit): {avg_err:.3g}")
-        st.info(f"Maximum absolute error (histogram vs. fit): {max_err:.3g}")
+    # Manual override
+    manual = st.checkbox("🔧 Manual Fitting (Adjust parameters by hand)", value=False)
+    manual_params = list(fit_params)
+    if manual:
+        for i, (pname, pval) in enumerate(zip(param_names, fit_params)):
+            # Try to have a reasonable slider range
+            minv, maxv = (pval*0.5, pval*1.5) if abs(pval) > 0 else (-10, 10)
+            if pname == "scale":
+                minv = min(0.001, maxv)
+            manual_params[i] = st.slider(
+                f"{pname}", float(minv), float(maxv) if maxv > minv else float(minv)+1, float(pval)
+            )
+    
+    # Prepare x for plotting
+    bins = st.slider("Number of histogram bins", 10, 100, 25)
+    x_hist = np.linspace(np.nanmin(data), np.nanmax(data), bins) if len(data)>0 else np.linspace(0,1,25)
+    x_range = st.slider("PDF X-axis range", float(np.nanmin(data)*.95), float(np.nanmax(data)*1.05), 
+                        (float(np.nanmin(data)*.95), float(np.nanmax(data)*1.05)))
+    x_plot = np.linspace(x_range[0], x_range[1], 200)
 
-with tab_manual:
-    st.header("3. Manual Distribution Parameter Adjustment")
+    # Prepare fitted distribution for plotting
+    try:
+        dist_obj = scipy_dist(*manual_params)
+        pdf_vals = dist_obj.pdf(x_plot)
+    except Exception:
+        pdf_vals = np.zeros_like(x_plot)
+        st.warning("Could not evaluate PDF with selected parameters.")
 
-    dist_name_manual = st.selectbox(
-        "Select distribution for manual fitting",
-        list(DISTRIBUTIONS.keys()),
-        key="manual_dist",
-    )
-    dist_manual = DISTRIBUTIONS[dist_name_manual]
+    # ================== Plot Area ====================
+    fig, ax = plt.subplots(figsize=(6,4))
+    ax.hist(data, bins=bins, density=True, alpha=0.4, color='skyblue', label='Data Histogram')
+    ax.plot(x_plot, pdf_vals, 'r-', lw=2, label='Fitted PDF')
+    ax.set_xlim(x_range)
+    ax.set_xlabel('Value')
+    ax.set_ylabel('Density')
+    ax.legend()
+    st.pyplot(fig)
 
-    params_manual_default = dist_manual.fit(data)
-    param_info_manual = get_param_info(dist_manual, params_manual_default)
+    # ============= Fitting Error Calculation ============
+    # For metric, use: Avg absolute error of histogram bin heights vs. PDF evaluated at bin centers
+    hist_vals, bin_edges = np.histogram(data, bins=bins, range=x_range, density=True)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    try:
+        fit_at_bins = scipy_dist(*manual_params).pdf(bin_centers)
+        abs_err = np.abs(hist_vals - fit_at_bins)
+        mae = np.mean(abs_err)
+        max_err = np.max(abs_err)
+    except Exception:
+        mae = np.nan
+        max_err = np.nan
+    st.subheader("Fit Quality")
+    st.metric("Mean Absolute Error (Histogram vs. Fit)", f"{mae:.5f}")
+    st.metric("Maximum Error (Histogram vs. Fit)", f"{max_err:.5f}")
 
-    slider_params = make_param_sliders(param_info_manual, data)
+    with st.expander("Show bin-by-bin comparison details"):
+        st.dataframe(pd.DataFrame({
+            "Bin center": bin_centers,
+            "Histogram density": hist_vals,
+            "Fit density": fit_at_bins,
+            "Abs Error": abs_err
+        }).round(5), use_container_width=True)
 
-    fig_manual, bin_centers_manual, hist_vals_manual = plot_hist_with_pdf(
-        data,
-        dist_manual,
-        slider_params,
-        n_bins,
-        title_label=f"{dist_name_manual} (manual fit)",
-    )
-    st.pyplot(fig_manual)
-
-    avg_err_m, max_err_m = compute_fit_error(
-        dist_manual, slider_params, bin_centers_manual, hist_vals_manual
-    )
-    if avg_err_m is not None:
-        st.info(f"Manual fit – average absolute error: {avg_err_m:.3g}")
-        st.info(f"Manual fit – maximum absolute error: {max_err_m:.3g}")
-    else:
-        st.warning("Unable to compute fit error for these parameters.")
+st.caption("Built with Streamlit, numpy, scipy, matplotlib, and pandas ✨")
+st.caption("© 2024 Histogram Fitting App | By [Nithipan Sivakanthan]")
