@@ -5,10 +5,7 @@ from scipy import stats
 import matplotlib.pyplot as plt
 import streamlit as st
 
-
-
 st.set_page_config(page_title="Histogram Fitting Webapp", layout="wide")
-
 
 DISTRIBUTIONS = {
     "Normal (Gaussian)": stats.norm,
@@ -24,19 +21,14 @@ DISTRIBUTIONS = {
     "Logistic": stats.logistic,
 }
 
-
-
 def parse_manual_data(raw_text: str) -> np.ndarray:
     """
-    Turn a string like '1, 2 3\n4' into a 1D numpy array of numbers.
+    Turn a string like '1, 2 3\\n4' into a 1D numpy array of numbers.
     """
-    # Replace newlines with commas so genfromtxt can handle both commas and newlines
-    cleaned = raw_text.replace("\n", ",")
+    cleaned = raw_text.replace("\\n", ",")
     data = np.genfromtxt(cleaned, delimiter=",")
-    # Force 1D and drop NaNs
     data = np.atleast_1d(data)
     return data[~np.isnan(data)]
-
 
 def get_param_info(dist, params):
     """
@@ -45,8 +37,8 @@ def get_param_info(dist, params):
     """
     shape_names = dist.shapes.split(", ") if dist.shapes else []
     param_info = []
-
     n_params = len(params)
+
     for i, value in enumerate(params):
         if i < len(shape_names):
             name = shape_names[i]  # shape parameters (e.g. "a", "b")
@@ -59,7 +51,6 @@ def get_param_info(dist, params):
         param_info.append((name, value))
 
     return param_info
-
 
 def make_param_sliders(param_info, data):
     """
@@ -77,19 +68,15 @@ def make_param_sliders(param_info, data):
     for name, default in param_info:
         # Decide slider range based on parameter type
         if name == "loc":
-            # Location: a bit beyond data range
             minv = data_min - 0.5 * data_range
             maxv = data_max + 0.5 * data_range
         elif name == "scale":
-            # Scale must be > 0, use a positive range based on data spread
             minv = data_range / 50
             maxv = data_range * 2
         else:
-            # Shape parameters: generic range based on data
             minv = 0.0
             maxv = max(2 * data_max, 10.0)
 
-        # Make sure default is inside [minv, maxv]
         value = float(np.clip(default, minv, maxv))
         step = (maxv - minv) / 200 if maxv > minv else 0.1
 
@@ -105,7 +92,6 @@ def make_param_sliders(param_info, data):
 
     return slider_values
 
-
 def plot_hist_with_pdf(data, dist, params, n_bins, title_label):
     """
     Draw a normalized histogram of 'data' and overlay the PDF of 'dist' with 'params'.
@@ -118,7 +104,6 @@ def plot_hist_with_pdf(data, dist, params, n_bins, title_label):
     except Exception:
         y = np.zeros_like(x)
 
-    # Histogram
     hist_vals, bin_edges = np.histogram(data, bins=n_bins, density=True)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
@@ -131,7 +116,6 @@ def plot_hist_with_pdf(data, dist, params, n_bins, title_label):
 
     return fig, bin_centers, hist_vals
 
-
 def compute_fit_error(dist, params, bin_centers, hist_vals):
     """
     Compute average and maximum absolute error between histogram and PDF.
@@ -143,7 +127,7 @@ def compute_fit_error(dist, params, bin_centers, hist_vals):
     except Exception:
         return None, None
 
-
+# ---------------- Sidebar: Data Input ----------------
 
 st.sidebar.header("1. Data Input")
 
@@ -163,7 +147,7 @@ if data_input_method == "Enter by hand":
         data = parse_manual_data(manual_text)
     except Exception:
         st.sidebar.warning(
-            "Please enter numbers separated by commas, spaces, or lines.\n"
+            "Please enter numbers separated by commas, spaces, or lines.\\n"
             "Example: 1, 2, 3, 4"
         )
         data = np.array([])
@@ -184,17 +168,16 @@ else:  # Upload CSV
     else:
         data = np.array([])
 
-# If not enough data, stop here
 if data is None or len(data) < 5:
     st.info("Please enter or upload at least 5 data points to begin.")
     st.stop()
 
 st.sidebar.markdown("---")
 
+# ---------------- Main Layout ----------------
 
 st.title("Histogram Fitting Webapp")
 tab_auto, tab_manual = st.tabs(["Fit Distributions (Auto)", "Manual Fitting"])
-
 
 with tab_auto:
     st.header("2. Automatic Distribution Fitting")
@@ -209,11 +192,9 @@ with tab_auto:
 
     n_bins = st.slider("Number of histogram bins", 5, 75, 25)
 
-    # Fit the distribution parameters to the data
     params_auto = dist_auto.fit(data)
     param_info_auto = get_param_info(dist_auto, params_auto)
 
-    # Plot histogram + PDF
     fig_auto, bin_centers_auto, hist_vals_auto = plot_hist_with_pdf(
         data,
         dist_auto,
@@ -223,22 +204,18 @@ with tab_auto:
     )
     st.pyplot(fig_auto)
 
-    # Show parameters
     st.subheader("Fitted Parameters")
     pretty_params = ", ".join(
         f"{name} = {value:.4g}" for name, value in param_info_auto
     )
     st.code(pretty_params)
 
-    # Show simple error metrics
     avg_err, max_err = compute_fit_error(
         dist_auto, params_auto, bin_centers_auto, hist_vals_auto
     )
     if avg_err is not None:
         st.info(f"Average absolute error (histogram vs. fit): {avg_err:.3g}")
         st.info(f"Maximum absolute error (histogram vs. fit): {max_err:.3g}")
-
-
 
 with tab_manual:
     st.header("3. Manual Distribution Parameter Adjustment")
@@ -250,14 +227,11 @@ with tab_manual:
     )
     dist_manual = DISTRIBUTIONS[dist_name_manual]
 
-    # Start sliders from the automatic fit as "good guesses"
     params_manual_default = dist_manual.fit(data)
     param_info_manual = get_param_info(dist_manual, params_manual_default)
 
-    # Parameter sliders
     slider_params = make_param_sliders(param_info_manual, data)
 
-    # Plot histogram + manual PDF
     fig_manual, bin_centers_manual, hist_vals_manual = plot_hist_with_pdf(
         data,
         dist_manual,
@@ -267,7 +241,6 @@ with tab_manual:
     )
     st.pyplot(fig_manual)
 
-    # Error for manual parameters
     avg_err_m, max_err_m = compute_fit_error(
         dist_manual, slider_params, bin_centers_manual, hist_vals_manual
     )
@@ -276,9 +249,3 @@ with tab_manual:
         st.info(f"Manual fit – maximum absolute error: {max_err_m:.3g}")
     else:
         st.warning("Unable to compute fit error for these parameters.")
-
-
-
-
-
-
